@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+.ipynb_checkpoints/
+Pipfile*
+poetry.lock
+.DS_Store
+reports/
+models/
+cache/
+.pytest_cache
+ridezone_ai.egg-info/
+venv/

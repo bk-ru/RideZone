@@ -1,0 +1,517 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RideZone AI · Интерактивный анализ Москвы</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+        .card { background: #fff; border-radius: 1rem; box-shadow: 0 10px 35px rgba(15,23,42,0.08); padding: 1.5rem; }
+        .kpi-card { background: linear-gradient(135deg,#f8fafc,#eef2ff); border-radius: 0.8rem; padding: 1rem; display: flex; flex-direction: column; gap: 0.35rem; }
+        .layer-toggle { display: flex; align-items: center; gap: 10px; padding: 0.35rem 0.9rem; border-radius: 999px; border: 1px solid rgba(15,23,42,0.1); background: #f1f5f9; color: #0f172a; font-size: 0.78rem; font-weight: 600; transition: all 0.2s ease; cursor: pointer; }
+        .layer-toggle .layer-value { background: #fff; border-radius: 999px; padding: 0 0.45rem; font-size: 0.7rem; font-weight: 700; color: #0f172a; }
+        .layer-toggle .layer-hint { font-size: 0.7rem; font-weight: 500; color: #475569; }
+        .layer-toggle.active { background: linear-gradient(135deg,#6366f1,#8b5cf6); color: #fff; border-color: transparent; }
+        .layer-toggle.active .layer-value { background: rgba(255,255,255,0.25); color: #fff; }
+        .map-wrapper { position: relative; border-radius: 0.9rem; overflow: hidden; }
+        .map-legend { position: absolute; bottom: 14px; left: 14px; background: rgba(15,23,42,0.82); color: #fff; padding: 0.85rem 1rem; border-radius: 0.75rem; font-size: 0.75rem; line-height: 1.3; box-shadow: 0 8px 25px rgba(15,23,42,0.35); z-index: 1000; pointer-events: none; }
+        .map-legend h4 { margin-bottom: 0.4rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: #cbd5f5; }
+        .legend-item { display: flex; align-items: center; gap: 0.35rem; margin-bottom: 0.2rem; }
+        .legend-color { width: 12px; height: 12px; border-radius: 999px; }
+        .insight-chip { font-size: 0.7rem; color: #475569; background: #f8fafc; border: 1px dashed #cbd5f5; border-radius: 999px; padding: 0.25rem 0.75rem; display: inline-flex; gap: 0.3rem; align-items: center; }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-6 space-y-6">
+        <header class="card flex flex-col gap-3">
+            <div class="flex flex-col gap-2">
+                <div class="flex items-center gap-3">
+                    <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-400 to-cyan-500 flex items-center justify-center text-white text-2xl">🚴</div>
+                    <div>
+                        <h1 class="text-3xl font-bold text-slate-800">RideZone AI · Аналитика размещения в Москве</h1>
+                        <p class="text-slate-500">Визуализация прогноза спроса и инфраструктуры микромобильности на основе OSM и машинного обучения</p>
+                    </div>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <span class="insight-chip">📍 Реальные координаты по H3</span>
+                    <span class="insight-chip">🤖 RandomForest + доменные признаки</span>
+                    <span class="insight-chip">🔄 Фильтры влияют на точки и статистику</span>
+                </div>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <section class="card space-y-5">
+                <div>
+                    <h2 class="text-xl font-semibold text-slate-800 mb-1">📊 Параметры анализа</h2>
+                    <p class="text-sm text-slate-500">Фильтры применяются к прогнозным точкам и KPI. Подсказки укажут, какие слои включены на карте.</p>
+                </div>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-slate-600 mb-2">Радиус визуализации слоёв (м)</label>
+                        <input id="radiusSlider" type="range" min="100" max="1000" value="500" class="w-full">
+                        <span id="radiusValue" class="text-xs text-slate-500 mt-1 block">500 м — влияет на размер кластеров</span>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-600 mb-2">Минимальный прогноз спроса</label>
+                        <input id="demandSlider" type="range" min="100" max="250" value="150" class="w-full">
+                        <span id="demandValue" class="text-xs text-slate-500 mt-1 block">Показывать зоны ≥ 150 поездок/день</span>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-600 mb-2">Тип зоны</label>
+                        <select id="transportType" class="w-full rounded-lg border border-slate-200 px-3 py-2 text-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-400"></select>
+                        <span class="text-xs text-slate-500">Например, «туристический кластер» или «жилой массив»</span>
+                    </div>
+                    <div class="flex gap-3">
+                        <button id="analyzeBtn" class="flex-1 bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 rounded-lg transition">🔍 Обновить срез</button>
+                        <button id="trainModelBtn" class="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white font-medium py-2 rounded-lg transition">🤖 Пересчитать прогноз</button>
+                    </div>
+                </div>
+            </section>
+
+            <section class="card space-y-5">
+                <h2 class="text-xl font-semibold text-slate-800">📈 Статистика</h2>
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="kpi-card">
+                        <p class="text-xs text-slate-500 uppercase tracking-wide">Спрос в выборке</p>
+                        <p class="text-2xl font-bold text-slate-800" id="statDemand">-</p>
+                        <p class="text-xs text-slate-500">Суммарный прогноз по отфильтрованным зонам</p>
+                    </div>
+                    <div class="kpi-card">
+                        <p class="text-xs text-slate-500 uppercase tracking-wide">Средний потенциал</p>
+                        <p class="text-2xl font-bold text-slate-800" id="statPotential">-</p>
+                        <p class="text-xs text-slate-500">Средний композитный балл топ-зон</p>
+                    </div>
+                </div>
+                <div id="statistics" class="space-y-3 text-sm text-slate-600">
+                    <div class="flex justify-between"><span>Точек данных</span><span id="dataPoints" class="font-semibold text-slate-900">-</span></div>
+                    <div class="flex justify-between"><span>Зон высокого спроса</span><span id="highDemandZones" class="font-semibold text-slate-900">-</span></div>
+                    <div class="flex justify-between"><span>Рекомендуемых станций</span><span id="recommendedStations" class="font-semibold text-slate-900">-</span></div>
+                    <div class="flex justify-between"><span>R² модели</span><span id="modelAccuracy" class="font-semibold text-slate-900">-</span></div>
+                </div>
+                <div class="h-48">
+                    <canvas id="demandChart"></canvas>
+                    <p class="text-xs text-slate-500 mt-2">Диаграмма показывает вклад типов зон в общий прогноз (кликните легенду, чтобы скрывать серии).</p>
+                </div>
+            </section>
+
+            <section class="card space-y-4">
+                <h2 class="text-xl font-semibold text-slate-800">🎯 Машинное обучение</h2>
+                <p class="text-sm text-slate-500">Модель оценивает потенциал каждого гексагона Москвы, комбинируя спрос, инфраструктуру и конкуренцию.</p>
+                <div class="space-y-3">
+                    <div class="p-3 rounded-xl bg-blue-50">
+                        <p class="text-xs text-blue-600 uppercase tracking-wide font-semibold">Алгоритм</p>
+                        <p class="text-sm text-blue-900">RandomForest + постобработка (композиционный скоринг)</p>
+                    </div>
+                    <div class="p-3 rounded-xl bg-emerald-50">
+                        <p class="text-xs text-emerald-600 uppercase tracking-wide font-semibold">Статус модели</p>
+                        <p id="modelStatus" class="text-sm text-emerald-900">Готова</p>
+                    </div>
+                    <div class="p-3 rounded-xl bg-purple-50">
+                        <p class="text-xs text-purple-600 uppercase tracking-wide font-semibold">Кластеры</p>
+                        <p id="optimalClusters" class="text-sm text-purple-900">-</p>
+                    </div>
+                </div>
+                <button id="exportBtn" class="w-full bg-purple-500 hover:bg-purple-600 text-white font-medium py-2 rounded-lg transition flex items-center justify-center gap-2">📥 Экспорт рекомендаций (JSON)</button>
+            </section>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <section class="card space-y-4">
+                <div class="flex flex-col gap-2">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h2 class="text-xl font-semibold text-slate-800">🗺️ Пространственный анализ</h2>
+                            <p class="text-xs text-slate-500">Комбинируй слои, чтобы понять контекст зон. Подсветка рассказывает, что означает каждый цвет.</p>
+                        </div>
+                        <div class="flex flex-wrap gap-2 justify-end">
+                            <button id="toggleHeatmap" data-layer="heatmap" class="layer-toggle active">
+                                🔥 Тепловая карта
+                                <span class="layer-value" data-layer-value="heatmap">-</span>
+                                <span class="layer-hint">Спрос</span>
+                            </button>
+                            <button id="toggleClusters" data-layer="clusters" class="layer-toggle active">
+                                🟦 Кластеры
+                                <span class="layer-value" data-layer-value="clusters">-</span>
+                                <span class="layer-hint">Округа</span>
+                            </button>
+                            <button id="toggleStations" data-layer="stations" class="layer-toggle active">
+                                ✅ Станции
+                                <span class="layer-value" data-layer-value="stations">-</span>
+                                <span class="layer-hint">Рекомендации</span>
+                            </button>
+                        </div>
+                    </div>
+                    <p class="text-xs text-slate-500">Тепловая карта показывает плотность прогнозов, синие окружности — усреднённый спрос по округам, зелёные значки S — лучшие локации по композитному скору, цветные точки — отдельные гексагоны.</p>
+                </div>
+                <div class="map-wrapper">
+                    <div id="map" class="h-96"></div>
+                    <div class="map-legend">
+                        <h4>Легенда</h4>
+                        <div class="legend-item"><span class="legend-color" style="background:#f87171"></span><span>Высокий прогноз спроса</span></div>
+                        <div class="legend-item"><span class="legend-color" style="background:#fb923c"></span><span>Средний спрос</span></div>
+                        <div class="legend-item"><span class="legend-color" style="background:#34d399"></span><span>Контрольная точка</span></div>
+                        <div class="legend-item"><span class="legend-color" style="background:#8b5cf6"></span><span>Кластер округа</span></div>
+                        <div class="legend-item"><span class="legend-color" style="background:#10b981"></span><span>Рекомендуемая станция</span></div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="card space-y-4">
+                <div>
+                    <h2 class="text-xl font-semibold text-slate-800">📊 Прогноз спроса</h2>
+                    <p class="text-xs text-slate-500">Столбцы сравнивают текущий трафик и прогноз в наиболее перспективных зонах. Разрыв — потенциальный прирост.</p>
+                </div>
+                <div class="h-96">
+                    <canvas id="forecastChart"></canvas>
+                </div>
+            </section>
+        </div>
+
+        <section class="card space-y-4">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h2 class="text-xl font-semibold text-slate-800">📋 Рекомендации по размещению</h2>
+                    <p class="text-xs text-slate-500">Каждая строка — гексагон Москвы. Таблица отражает координаты, ожидаемый спрос, покрытие и аргументацию ML-модели.</p>
+                </div>
+                <span class="text-sm text-slate-500">Сортировано по композитному баллу</span>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-slate-100 text-sm">
+                    <thead class="bg-slate-50 text-slate-500 uppercase text-xs">
+                        <tr>
+                            <th class="px-4 py-3 text-left">Приоритет</th>
+                            <th class="px-4 py-3 text-left">Зона</th>
+                            <th class="px-4 py-3 text-left">Координаты</th>
+                            <th class="px-4 py-3 text-left">Прогноз спроса</th>
+                            <th class="px-4 py-3 text-left">Факторы</th>
+                            <th class="px-4 py-3 text-left">Рекомендация</th>
+                        </tr>
+                    </thead>
+                    <tbody id="recommendationsTable" class="divide-y divide-slate-100 bg-white text-slate-700"></tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <script>
+    class DashboardApp {
+        constructor(payload) {
+            this.payload = payload;
+            this.filteredZones = payload.zones || [];
+            this.showHeatmap = true;
+            this.showClusters = true;
+            this.showStations = true;
+            this.map = null;
+            this.mapLayers = { points: [], stations: [], clusters: [], heatmap: null };
+            this.charts = { demand: null, forecast: null };
+        }
+
+        init() {
+            this.cacheDom();
+            this.populateFilters();
+            this.bindEvents();
+            this.initMap();
+            this.updateUI();
+        }
+
+        cacheDom() {
+            this.dom = {
+                radiusSlider: document.getElementById('radiusSlider'),
+                radiusValue: document.getElementById('radiusValue'),
+                demandSlider: document.getElementById('demandSlider'),
+                demandValue: document.getElementById('demandValue'),
+                transportType: document.getElementById('transportType'),
+                dataPoints: document.getElementById('dataPoints'),
+                highDemandZones: document.getElementById('highDemandZones'),
+                recommendedStations: document.getElementById('recommendedStations'),
+                modelAccuracy: document.getElementById('modelAccuracy'),
+                modelStatus: document.getElementById('modelStatus'),
+                optimalClusters: document.getElementById('optimalClusters'),
+                recommendationsTable: document.getElementById('recommendationsTable'),
+                analyzeBtn: document.getElementById('analyzeBtn'),
+                trainModelBtn: document.getElementById('trainModelBtn'),
+                exportBtn: document.getElementById('exportBtn'),
+                statDemand: document.getElementById('statDemand'),
+                statPotential: document.getElementById('statPotential'),
+                layerValueHeatmap: document.querySelector('[data-layer-value="heatmap"]'),
+                layerValueClusters: document.querySelector('[data-layer-value="clusters"]'),
+                layerValueStations: document.querySelector('[data-layer-value="stations"]'),
+                toggleHeatmap: document.getElementById('toggleHeatmap'),
+                toggleClusters: document.getElementById('toggleClusters'),
+                toggleStations: document.getElementById('toggleStations'),
+            };
+            this.layerButtons = [
+                this.dom.toggleHeatmap,
+                this.dom.toggleClusters,
+                this.dom.toggleStations,
+            ];
+        }
+
+        populateFilters() {
+            const { filters } = this.payload.meta;
+            const select = this.dom.transportType;
+            select.innerHTML = '<option value="all">Все типы</option>';
+            filters.zone_types.forEach((type) => {
+                const option = document.createElement('option');
+                option.value = type;
+                option.textContent = type;
+                select.appendChild(option);
+            });
+        }
+
+        bindEvents() {
+            this.dom.radiusSlider.addEventListener('input', () => {
+                this.dom.radiusValue.textContent = `${this.dom.radiusSlider.value} м — влияет на размер кластеров`;
+                this.updateMap();
+            });
+            this.dom.demandSlider.addEventListener('input', () => {
+                this.dom.demandValue.textContent = `Показывать зоны ≥ ${this.dom.demandSlider.value} поездок/день`;
+            });
+            this.dom.analyzeBtn.addEventListener('click', () => this.updateUI());
+            this.dom.trainModelBtn.addEventListener('click', () => this.showToast('Используется актуальная модель — повторный расчёт не требуется (данные из dashboard_data.json).'));
+            this.dom.exportBtn.addEventListener('click', () => this.exportRecommendations());
+
+            this.layerButtons.forEach((button) => {
+                button.addEventListener('click', () => {
+                    const layer = button.dataset.layer;
+                    if (layer === 'heatmap') this.showHeatmap = !this.showHeatmap;
+                    if (layer === 'clusters') this.showClusters = !this.showClusters;
+                    if (layer === 'stations') this.showStations = !this.showStations;
+                    this.updateToggleStates();
+                    this.updateMap();
+                });
+            });
+        }
+
+        initMap() {
+            const defaultLat = this.payload.zones?.[0]?.latitude ?? 55.75;
+            const defaultLng = this.payload.zones?.[0]?.longitude ?? 37.6;
+            this.map = L.map('map').setView([defaultLat, defaultLng], 11);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors' }).addTo(this.map);
+            this.updateToggleStates();
+        }
+
+        updateUI() {
+            this.filterZones();
+            this.updateStats();
+            this.updateCharts();
+            this.updateTable();
+            this.updateMap();
+            this.updateLayerBadges();
+        }
+
+        filterZones() {
+            const demandThreshold = parseFloat(this.dom.demandSlider.value);
+            const zoneType = this.dom.transportType.value;
+            this.filteredZones = this.payload.zones.filter((zone) => {
+                const matchesDemand = zone.predicted_trips >= demandThreshold;
+                const matchesType = zoneType === 'all' || zone.zone_type === zoneType;
+                return matchesDemand && matchesType;
+            });
+        }
+
+        updateStats() {
+            const stats = this.payload.meta.stats;
+            const demandSum = this.filteredZones.reduce((sum, zone) => sum + zone.predicted_trips, 0).toFixed(0);
+            const topRecommendations = this.payload.recommendations.slice(0, 5);
+            const avgScore = topRecommendations.length ? (topRecommendations.reduce((acc, rec) => acc + rec.composite_score, 0) / topRecommendations.length).toFixed(3) : '-';
+
+            this.dom.statDemand.textContent = demandSum;
+            this.dom.statPotential.textContent = avgScore;
+            this.dom.dataPoints.textContent = stats.total_points;
+            this.dom.highDemandZones.textContent = this.filteredZones.length;
+            this.dom.recommendedStations.textContent = this.payload.recommendations.length;
+            this.dom.modelAccuracy.textContent = this.payload.meta.metrics.r2.toFixed(3);
+            this.dom.modelStatus.textContent = 'Обучена (dashboard_data.json)';
+            this.dom.optimalClusters.textContent = this.payload.clusters.length;
+        }
+
+        updateCharts() {
+            const ctxDemand = document.getElementById('demandChart').getContext('2d');
+            const ctxForecast = document.getElementById('forecastChart').getContext('2d');
+            if (this.charts.demand) this.charts.demand.destroy();
+            if (this.charts.forecast) this.charts.forecast.destroy();
+
+            const distribution = this.payload.distribution;
+            this.charts.demand = new Chart(ctxDemand, {
+                type: 'doughnut',
+                data: {
+                    labels: distribution.labels,
+                    datasets: [{ data: distribution.values, backgroundColor: ['#0ea5e9', '#10b981', '#f97316', '#8b5cf6', '#f43f5e'], borderWidth: 0 }],
+                },
+                options: { plugins: { legend: { position: 'bottom' } }, maintainAspectRatio: false },
+            });
+
+            const forecast = this.payload.forecast;
+            this.charts.forecast = new Chart(ctxForecast, {
+                type: 'bar',
+                data: {
+                    labels: forecast.labels,
+                    datasets: [
+                        { label: 'Текущий спрос', data: forecast.historical, backgroundColor: '#0ea5e9' },
+                        { label: 'Прогноз', data: forecast.forecast, backgroundColor: '#f43f5e' },
+                    ],
+                },
+                options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true } } },
+            });
+        }
+
+        updateTable() {
+            const tbody = this.dom.recommendationsTable;
+            tbody.innerHTML = '';
+            this.payload.recommendations.slice(0, 8).forEach((rec, idx) => {
+                const zone = this.payload.zones.find((z) => z.zone_id === rec.zone_id);
+                const coords = zone ? `${zone.latitude.toFixed(4)}, ${zone.longitude.toFixed(4)}` : '—';
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td class="px-4 py-3"><span class="layer-toggle active" style="padding:0.15rem 0.55rem; font-size:0.7rem;">#${idx + 1}</span></td>
+                    <td class="px-4 py-3">
+                        <div class="font-semibold text-slate-800">${rec.zone_id}</div>
+                        <div class="text-xs text-slate-500">${rec.district} · ${rec.zone_type}</div>
+                    </td>
+                    <td class="px-4 py-3 text-sm text-slate-600">${coords}</td>
+                    <td class="px-4 py-3">
+                        <div class="text-slate-800 font-semibold">${rec.predicted_trips.toFixed(1)}</div>
+                        <div class="text-xs text-slate-500">поездок/день</div>
+                    </td>
+                    <td class="px-4 py-3 text-xs text-slate-500">${rec.rationale}</td>
+                    <td class="px-4 py-3"><span class="layer-toggle active" style="padding:0.2rem 0.6rem; font-size:0.7rem;">Рекомендуется</span></td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        updateLayerBadges() {
+            if (this.dom.layerValueHeatmap) this.dom.layerValueHeatmap.textContent = this.filteredZones.length;
+            if (this.dom.layerValueClusters) this.dom.layerValueClusters.textContent = this.payload.clusters.length;
+            if (this.dom.layerValueStations) this.dom.layerValueStations.textContent = this.payload.recommendations.length;
+        }
+
+        updateToggleStates() {
+            this.dom.toggleHeatmap.classList.toggle('active', this.showHeatmap);
+            this.dom.toggleClusters.classList.toggle('active', this.showClusters);
+            this.dom.toggleStations.classList.toggle('active', this.showStations);
+        }
+
+        updateMap() {
+            this.clearMapLayers();
+            const radius = parseInt(this.dom.radiusSlider.value, 10);
+            const gradientColors = ['#34d399', '#fb923c', '#f87171'];
+
+            this.filteredZones.forEach((zone) => {
+                const demandBucket = Math.min(gradientColors.length - 1, Math.floor((zone.predicted_trips - 120) / 40));
+                const color = gradientColors[Math.max(0, demandBucket)];
+                const marker = L.circleMarker([zone.latitude, zone.longitude], {
+                    radius: 6,
+                    color,
+                    fillColor: color,
+                    fillOpacity: 0.85,
+                    weight: 0.8,
+                }).bindPopup(`
+                    <strong>${zone.zone_id}</strong><br/>
+                    ${zone.district} · ${zone.zone_type}<br/>
+                    Прогноз: ${zone.predicted_trips.toFixed(1)} поездок/день
+                `);
+                marker.addTo(this.map);
+                this.mapLayers.points.push(marker);
+            });
+
+            if (this.showHeatmap) {
+                const heatLayer = L.heatLayer(this.payload.heatmap, { radius: 25, blur: 20, maxZoom: 15, max: 1 });
+                heatLayer.addTo(this.map);
+                this.mapLayers.heatmap = heatLayer;
+            }
+
+            if (this.showClusters) {
+                this.payload.clusters.forEach((cluster) => {
+                    const layer = L.circle([cluster.center.lat, cluster.center.lng], {
+                        radius: radius * (cluster.avgDemand / 200),
+                        color: '#6366f1',
+                        fillColor: '#a5b4fc',
+                        fillOpacity: 0.2,
+                    }).bindPopup(`<strong>${cluster.label}</strong><br/>Зон: ${cluster.size}<br/>Спрос: ${cluster.avgDemand.toFixed(1)}`);
+                    layer.addTo(this.map);
+                    this.mapLayers.clusters.push(layer);
+                });
+            }
+
+            if (this.showStations) {
+                this.payload.recommendations.slice(0, 8).forEach((rec, idx) => {
+                    const zone = this.payload.zones.find((z) => z.zone_id === rec.zone_id);
+                    if (!zone) return;
+                    const station = L.marker([zone.latitude, zone.longitude], {
+                        icon: L.divIcon({
+                            className: 'custom-div-icon',
+                            html: `<div style="background:#10b981;color:#fff;font-weight:bold;padding:6px 12px;border-radius:14px;box-shadow:0 8px 15px rgba(16,185,129,0.35);">S${idx + 1}</div>`,
+                            iconSize: [42, 28],
+                            iconAnchor: [21, 14],
+                        }),
+                    }).bindPopup(`<strong>Станция S${idx + 1}</strong><br/>${rec.zone_id}<br/>Спрос: ${rec.predicted_trips.toFixed(1)} поездок/день`);
+                    station.addTo(this.map);
+                    this.mapLayers.stations.push(station);
+                });
+            }
+        }
+
+        clearMapLayers() {
+            this.mapLayers.points.forEach((layer) => this.map.removeLayer(layer));
+            this.mapLayers.stations.forEach((layer) => this.map.removeLayer(layer));
+            this.mapLayers.clusters.forEach((layer) => this.map.removeLayer(layer));
+            this.mapLayers.points = [];
+            this.mapLayers.stations = [];
+            this.mapLayers.clusters = [];
+            if (this.mapLayers.heatmap) {
+                this.map.removeLayer(this.mapLayers.heatmap);
+                this.mapLayers.heatmap = null;
+            }
+        }
+
+        exportRecommendations() {
+            const blob = new Blob([JSON.stringify(this.payload.recommendations, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `ridezone-recommendations-${Date.now()}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+            this.showToast('Рекомендации выгружены в JSON');
+        }
+
+        showToast(message) {
+            const toast = document.createElement('div');
+            toast.className = 'fixed top-6 right-6 bg-slate-900 text-white px-4 py-2 rounded-lg shadow-lg text-sm z-50';
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2800);
+        }
+    }
+
+    async function bootstrap() {
+        try {
+            const response = await fetch(`dashboard_data.json?v=${Date.now()}`, { cache: 'no-store' });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const payload = await response.json();
+            const app = new DashboardApp(payload);
+            app.init();
+        } catch (err) {
+            console.error('Не удалось загрузить dashboard_data.json', err);
+            const message = err instanceof Error ? err.message : String(err);
+            const container = document.querySelector('.container');
+            container.innerHTML = '<div class="card text-center text-red-600 space-y-2">'
+                + '<p>Не удалось загрузить данные dashboard_data.json.</p>'
+                + `<p class="text-sm text-red-400">Детали: ${message}</p>`
+                + '<p class="text-sm text-slate-500">Выполните <code>python scripts/build_dashboard_data.py</code> и откройте dashboard через <code>python -m http.server</code>.</p>'
+                + '</div>';
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', bootstrap);
+    </script>
+</body>
+</html>
