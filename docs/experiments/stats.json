@@ -1,0 +1,14 @@
+{
+  "primary_metric": "MAE",
+  "tests": {
+    "Wilcoxon_RF_vs_GB": {
+      "stat": 0.0,
+      "p_value": 0.0625
+    },
+    "Levene_equal_variances": {
+      "stat": 2.240441874996395,
+      "p_value": 0.14900625513123583
+    },
+    "Shapiro_info": "Распределение остатков проверяется на holdout-разбиении внутри make_loss_curve."
+  }
+}
