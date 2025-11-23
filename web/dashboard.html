@@ -53,25 +53,15 @@
                 </div>
                 <div class="space-y-4">
                     <div>
-                        <label class="block text-sm font-medium text-slate-600 mb-2">Радиус визуализации слоёв (м)</label>
-                        <input id="radiusSlider" type="range" min="100" max="1000" value="500" class="w-full">
-                        <span id="radiusValue" class="text-xs text-slate-500 mt-1 block">500 м — влияет на размер кластеров</span>
-                    </div>
-                    <div>
                         <label class="block text-sm font-medium text-slate-600 mb-2">Минимальный прогноз спроса</label>
                         <input id="demandSlider" type="range" min="100" max="250" value="150" class="w-full">
                         <span id="demandValue" class="text-xs text-slate-500 mt-1 block">Показывать зоны ≥ 150 поездок/день</span>
                     </div>
-                    <div>
-                        <label class="block text-sm font-medium text-slate-600 mb-2">Тип зоны</label>
-                        <select id="transportType" class="w-full rounded-lg border border-slate-200 px-3 py-2 text-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-400"></select>
-                        <span class="text-xs text-slate-500">Например, «туристический кластер» или «жилой массив»</span>
-                    </div>
-                    <div class="flex gap-3">
-                        <button id="analyzeBtn" class="flex-1 bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 rounded-lg transition">🔍 Обновить срез</button>
-                        <button id="trainModelBtn" class="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white font-medium py-2 rounded-lg transition">🤖 Пересчитать прогноз</button>
-                    </div>
+                <div class="flex gap-3">
+                    <button id="analyzeBtn" class="flex-1 bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 rounded-lg transition">🔍 Обновить срез</button>
+                    <button id="trainModelBtn" class="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white font-medium py-2 rounded-lg transition">🤖 Пересчитать прогноз</button>
                 </div>
+            </div>
             </section>
 
             <section class="card space-y-5">
@@ -92,11 +82,13 @@
                     <div class="flex justify-between"><span>Точек данных</span><span id="dataPoints" class="font-semibold text-slate-900">-</span></div>
                     <div class="flex justify-between"><span>Зон высокого спроса</span><span id="highDemandZones" class="font-semibold text-slate-900">-</span></div>
                     <div class="flex justify-between"><span>Рекомендуемых станций</span><span id="recommendedStations" class="font-semibold text-slate-900">-</span></div>
-                    <div class="flex justify-between"><span>R² модели</span><span id="modelAccuracy" class="font-semibold text-slate-900">-</span></div>
                 </div>
-                <div class="h-48">
-                    <canvas id="demandChart"></canvas>
-                    <p class="text-xs text-slate-500 mt-2">Диаграмма показывает вклад типов зон в общий прогноз (кликните легенду, чтобы скрывать серии).</p>
+                <div class="h-48" id="demandStats">
+                    <p class="text-sm text-slate-600">Заполненность гексагонов:</p>
+                    <div class="grid grid-cols-2 gap-2 text-xs text-slate-500 mt-2">
+                        <span>Топ-25% (красные точки)</span><span id="highShare" class="text-slate-900 font-semibold">-</span>
+                        <span>Средний спрос (оранжевые)</span><span id="midShare" class="text-slate-900 font-semibold">-</span>
+                    </div>
                 </div>
             </section>
 
@@ -111,10 +103,6 @@
                     <div class="p-3 rounded-xl bg-emerald-50">
                         <p class="text-xs text-emerald-600 uppercase tracking-wide font-semibold">Статус модели</p>
                         <p id="modelStatus" class="text-sm text-emerald-900">Готова</p>
-                    </div>
-                    <div class="p-3 rounded-xl bg-purple-50">
-                        <p class="text-xs text-purple-600 uppercase tracking-wide font-semibold">Кластеры</p>
-                        <p id="optimalClusters" class="text-sm text-purple-900">-</p>
                     </div>
                 </div>
                 <button id="exportBtn" class="w-full bg-purple-500 hover:bg-purple-600 text-white font-medium py-2 rounded-lg transition flex items-center justify-center gap-2">📥 Экспорт рекомендаций (JSON)</button>
@@ -135,11 +123,6 @@
                                 <span class="layer-value" data-layer-value="heatmap">-</span>
                                 <span class="layer-hint">Спрос</span>
                             </button>
-                            <button id="toggleClusters" data-layer="clusters" class="layer-toggle active">
-                                🟦 Кластеры
-                                <span class="layer-value" data-layer-value="clusters">-</span>
-                                <span class="layer-hint">Округа</span>
-                            </button>
                             <button id="toggleStations" data-layer="stations" class="layer-toggle active">
                                 ✅ Станции
                                 <span class="layer-value" data-layer-value="stations">-</span>
@@ -156,7 +139,6 @@
                         <div class="legend-item"><span class="legend-color" style="background:#f87171"></span><span>Высокий прогноз спроса</span></div>
                         <div class="legend-item"><span class="legend-color" style="background:#fb923c"></span><span>Средний спрос</span></div>
                         <div class="legend-item"><span class="legend-color" style="background:#34d399"></span><span>Контрольная точка</span></div>
-                        <div class="legend-item"><span class="legend-color" style="background:#8b5cf6"></span><span>Кластер округа</span></div>
                         <div class="legend-item"><span class="legend-color" style="background:#10b981"></span><span>Рекомендуемая станция</span></div>
                     </div>
                 </div>
@@ -165,7 +147,7 @@
             <section class="card space-y-4">
                 <div>
                     <h2 class="text-xl font-semibold text-slate-800">📊 Прогноз спроса</h2>
-                    <p class="text-xs text-slate-500">Столбцы сравнивают текущий трафик и прогноз в наиболее перспективных зонах. Разрыв — потенциальный прирост.</p>
+                    <p class="text-xs text-slate-500">Столбцы сравнивают базовый уровень (инфра) и потенциал AI в перспективных зонах. Разрыв — потенциальный прирост.</p>
                 </div>
                 <div class="h-96">
                     <canvas id="forecastChart"></canvas>
@@ -205,16 +187,14 @@
             this.payload = payload;
             this.filteredZones = payload.zones || [];
             this.showHeatmap = true;
-            this.showClusters = true;
             this.showStations = true;
             this.map = null;
-            this.mapLayers = { points: [], stations: [], clusters: [], heatmap: null };
+            this.mapLayers = { points: [], stations: [], heatmap: null };
             this.charts = { demand: null, forecast: null };
         }
 
         init() {
             this.cacheDom();
-            this.populateFilters();
             this.bindEvents();
             this.initMap();
             this.updateUI();
@@ -222,54 +202,32 @@
 
         cacheDom() {
             this.dom = {
-                radiusSlider: document.getElementById('radiusSlider'),
-                radiusValue: document.getElementById('radiusValue'),
                 demandSlider: document.getElementById('demandSlider'),
                 demandValue: document.getElementById('demandValue'),
-                transportType: document.getElementById('transportType'),
-                dataPoints: document.getElementById('dataPoints'),
+                                dataPoints: document.getElementById('dataPoints'),
                 highDemandZones: document.getElementById('highDemandZones'),
                 recommendedStations: document.getElementById('recommendedStations'),
-                modelAccuracy: document.getElementById('modelAccuracy'),
-                modelStatus: document.getElementById('modelStatus'),
-                optimalClusters: document.getElementById('optimalClusters'),
-                recommendationsTable: document.getElementById('recommendationsTable'),
+                                modelStatus: document.getElementById('modelStatus'),
+                                recommendationsTable: document.getElementById('recommendationsTable'),
                 analyzeBtn: document.getElementById('analyzeBtn'),
                 trainModelBtn: document.getElementById('trainModelBtn'),
                 exportBtn: document.getElementById('exportBtn'),
                 statDemand: document.getElementById('statDemand'),
                 statPotential: document.getElementById('statPotential'),
+                highShare: document.getElementById('highShare'),
+                midShare: document.getElementById('midShare'),
                 layerValueHeatmap: document.querySelector('[data-layer-value="heatmap"]'),
-                layerValueClusters: document.querySelector('[data-layer-value="clusters"]'),
                 layerValueStations: document.querySelector('[data-layer-value="stations"]'),
                 toggleHeatmap: document.getElementById('toggleHeatmap'),
-                toggleClusters: document.getElementById('toggleClusters'),
                 toggleStations: document.getElementById('toggleStations'),
             };
             this.layerButtons = [
                 this.dom.toggleHeatmap,
-                this.dom.toggleClusters,
                 this.dom.toggleStations,
             ];
         }
 
-        populateFilters() {
-            const { filters } = this.payload.meta;
-            const select = this.dom.transportType;
-            select.innerHTML = '<option value="all">Все типы</option>';
-            filters.zone_types.forEach((type) => {
-                const option = document.createElement('option');
-                option.value = type;
-                option.textContent = type;
-                select.appendChild(option);
-            });
-        }
-
         bindEvents() {
-            this.dom.radiusSlider.addEventListener('input', () => {
-                this.dom.radiusValue.textContent = `${this.dom.radiusSlider.value} м — влияет на размер кластеров`;
-                this.updateMap();
-            });
             this.dom.demandSlider.addEventListener('input', () => {
                 this.dom.demandValue.textContent = `Показывать зоны ≥ ${this.dom.demandSlider.value} поездок/день`;
             });
@@ -281,8 +239,7 @@
                 button.addEventListener('click', () => {
                     const layer = button.dataset.layer;
                     if (layer === 'heatmap') this.showHeatmap = !this.showHeatmap;
-                    if (layer === 'clusters') this.showClusters = !this.showClusters;
-                    if (layer === 'stations') this.showStations = !this.showStations;
+                                        if (layer === 'stations') this.showStations = !this.showStations;
                     this.updateToggleStates();
                     this.updateMap();
                 });
@@ -308,12 +265,7 @@
 
         filterZones() {
             const demandThreshold = parseFloat(this.dom.demandSlider.value);
-            const zoneType = this.dom.transportType.value;
-            this.filteredZones = this.payload.zones.filter((zone) => {
-                const matchesDemand = zone.predicted_trips >= demandThreshold;
-                const matchesType = zoneType === 'all' || zone.zone_type === zoneType;
-                return matchesDemand && matchesType;
-            });
+            this.filteredZones = this.payload.zones.filter((zone) => zone.predicted_trips >= demandThreshold);
         }
 
         updateStats() {
@@ -327,35 +279,27 @@
             this.dom.dataPoints.textContent = stats.total_points;
             this.dom.highDemandZones.textContent = this.filteredZones.length;
             this.dom.recommendedStations.textContent = this.payload.recommendations.length;
-            this.dom.modelAccuracy.textContent = this.payload.meta.metrics.r2.toFixed(3);
             this.dom.modelStatus.textContent = 'Обучена (dashboard_data.json)';
-            this.dom.optimalClusters.textContent = this.payload.clusters.length;
         }
 
         updateCharts() {
-            const ctxDemand = document.getElementById('demandChart').getContext('2d');
             const ctxForecast = document.getElementById('forecastChart').getContext('2d');
-            if (this.charts.demand) this.charts.demand.destroy();
             if (this.charts.forecast) this.charts.forecast.destroy();
 
-            const distribution = this.payload.distribution;
-            this.charts.demand = new Chart(ctxDemand, {
-                type: 'doughnut',
-                data: {
-                    labels: distribution.labels,
-                    datasets: [{ data: distribution.values, backgroundColor: ['#0ea5e9', '#10b981', '#f97316', '#8b5cf6', '#f43f5e'], borderWidth: 0 }],
-                },
-                options: { plugins: { legend: { position: 'bottom' } }, maintainAspectRatio: false },
-            });
+            const q75 = this.payload.zones.length ? this.payload.zones.map((z) => z.predicted_trips).sort((a, b) => a - b)[Math.floor(this.payload.zones.length * 0.75)] : 0;
+            const highCount = this.payload.zones.filter((z) => z.predicted_trips >= q75).length;
+            const midCount = this.payload.zones.length - highCount;
+            this.dom.highShare.textContent = `${highCount} гексов`;
+            this.dom.midShare.textContent = `${midCount} гексов`;
 
             const forecast = this.payload.forecast;
             this.charts.forecast = new Chart(ctxForecast, {
                 type: 'bar',
                 data: {
-                    labels: forecast.labels,
+                    labels: forecast.labels.map((_, idx) => this.friendlyId(idx)),
                     datasets: [
-                        { label: 'Текущий спрос', data: forecast.historical, backgroundColor: '#0ea5e9' },
-                        { label: 'Прогноз', data: forecast.forecast, backgroundColor: '#f43f5e' },
+                        { label: 'Базовый спрос (инфра)', data: forecast.historical, backgroundColor: '#0ea5e9' },
+                        { label: 'Потенциальный спрос (AI)', data: forecast.forecast, backgroundColor: '#f43f5e' },
                     ],
                 },
                 options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true } } },
@@ -368,12 +312,13 @@
             this.payload.recommendations.slice(0, 8).forEach((rec, idx) => {
                 const zone = this.payload.zones.find((z) => z.zone_id === rec.zone_id);
                 const coords = zone ? `${zone.latitude.toFixed(4)}, ${zone.longitude.toFixed(4)}` : '—';
+                const displayId = this.friendlyId(idx);
                 const row = document.createElement('tr');
                 row.innerHTML = `
                     <td class="px-4 py-3"><span class="layer-toggle active" style="padding:0.15rem 0.55rem; font-size:0.7rem;">#${idx + 1}</span></td>
                     <td class="px-4 py-3">
-                        <div class="font-semibold text-slate-800">${rec.zone_id}</div>
-                        <div class="text-xs text-slate-500">${rec.district} · ${rec.zone_type}</div>
+                        <div class="font-semibold text-slate-800">${displayId}</div>
+                        <div class="text-xs text-slate-500">${rec.district} · ${this.friendlyZoneType(rec.zone_type)}</div>
                     </td>
                     <td class="px-4 py-3 text-sm text-slate-600">${coords}</td>
                     <td class="px-4 py-3">
@@ -389,19 +334,16 @@
 
         updateLayerBadges() {
             if (this.dom.layerValueHeatmap) this.dom.layerValueHeatmap.textContent = this.filteredZones.length;
-            if (this.dom.layerValueClusters) this.dom.layerValueClusters.textContent = this.payload.clusters.length;
-            if (this.dom.layerValueStations) this.dom.layerValueStations.textContent = this.payload.recommendations.length;
+                        if (this.dom.layerValueStations) this.dom.layerValueStations.textContent = this.payload.recommendations.length;
         }
 
         updateToggleStates() {
             this.dom.toggleHeatmap.classList.toggle('active', this.showHeatmap);
-            this.dom.toggleClusters.classList.toggle('active', this.showClusters);
             this.dom.toggleStations.classList.toggle('active', this.showStations);
         }
 
         updateMap() {
             this.clearMapLayers();
-            const radius = parseInt(this.dom.radiusSlider.value, 10);
             const gradientColors = ['#34d399', '#fb923c', '#f87171'];
 
             this.filteredZones.forEach((zone) => {
@@ -415,7 +357,7 @@
                     weight: 0.8,
                 }).bindPopup(`
                     <strong>${zone.zone_id}</strong><br/>
-                    ${zone.district} · ${zone.zone_type}<br/>
+                    ${zone.district} · ${this.friendlyZoneType(zone.zone_type)}<br/>
                     Прогноз: ${zone.predicted_trips.toFixed(1)} поездок/день
                 `);
                 marker.addTo(this.map);
@@ -426,19 +368,6 @@
                 const heatLayer = L.heatLayer(this.payload.heatmap, { radius: 25, blur: 20, maxZoom: 15, max: 1 });
                 heatLayer.addTo(this.map);
                 this.mapLayers.heatmap = heatLayer;
-            }
-
-            if (this.showClusters) {
-                this.payload.clusters.forEach((cluster) => {
-                    const layer = L.circle([cluster.center.lat, cluster.center.lng], {
-                        radius: radius * (cluster.avgDemand / 200),
-                        color: '#6366f1',
-                        fillColor: '#a5b4fc',
-                        fillOpacity: 0.2,
-                    }).bindPopup(`<strong>${cluster.label}</strong><br/>Зон: ${cluster.size}<br/>Спрос: ${cluster.avgDemand.toFixed(1)}`);
-                    layer.addTo(this.map);
-                    this.mapLayers.clusters.push(layer);
-                });
             }
 
             if (this.showStations) {
@@ -462,10 +391,8 @@
         clearMapLayers() {
             this.mapLayers.points.forEach((layer) => this.map.removeLayer(layer));
             this.mapLayers.stations.forEach((layer) => this.map.removeLayer(layer));
-            this.mapLayers.clusters.forEach((layer) => this.map.removeLayer(layer));
             this.mapLayers.points = [];
             this.mapLayers.stations = [];
-            this.mapLayers.clusters = [];
             if (this.mapLayers.heatmap) {
                 this.map.removeLayer(this.mapLayers.heatmap);
                 this.mapLayers.heatmap = null;
@@ -482,6 +409,16 @@
             URL.revokeObjectURL(url);
             this.showToast('Рекомендации выгружены в JSON');
         }
+
+        friendlyZoneType(type) {
+            if (!type || type.toLowerCase() === "hex") return "Зона покрытия";
+            return type;
+        }
+
+        friendlyId(idx) {
+            return `MSK_${idx + 1}`;
+        }
+
 
         showToast(message) {
             const toast = document.createElement('div');
