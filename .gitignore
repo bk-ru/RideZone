@@ -12,3 +12,4 @@ cache/
 .pytest_cache
 ridezone_ai.egg-info/
 venv/
+*.csv

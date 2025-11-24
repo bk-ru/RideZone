@@ -1,11 +1,11 @@
 """Helpers for generating JSON payloads consumed by the dashboard UI."""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-import json
 
 import numpy as np
 import pandas as pd
@@ -31,36 +31,42 @@ class DashboardDataBuilder:
         pipeline = self.pipeline or RideZonePipeline()
         result = pipeline.run()
 
-        frame = result.processed_frame.copy()
-        frame["predicted_trips"] = result.predictions
-        frame["demand_score"] = _normalize(frame["predicted_trips"])
-        if "micromobility_friendly_score" in frame:
-            frame["infrastructure_score"] = frame["micromobility_friendly_score"].clip(0, 1)
-        else:
-            frame["infrastructure_score"] = 0.5
-        if "competition_pressure" in frame:
-            frame["competition_penalty"] = _normalize(frame["competition_pressure"])
-        else:
-            frame["competition_penalty"] = 0.5
+        moscow = result.processed_moscow.copy()
+        moscow["predicted_trips"] = moscow["predicted_demand"]
+        moscow["zone_id"] = moscow["h3_index"]
+        moscow["zone_type"] = "hex"
+        moscow["district"] = self._default_district(moscow)
+        moscow["latitude"] = moscow["lat"]
+        moscow["longitude"] = moscow["lon"]
+        moscow["demand_score"] = _normalize(moscow["predicted_trips"])
+
+        recommendations = self._build_recommendations(moscow)
 
         payload = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
-            "meta": self._build_meta(result, frame),
-            "zones": self._build_zone_entries(frame),
-            "recommendations": self._build_recommendations(result.recommendations),
-            "heatmap": self._build_heatmap(frame),
-            "clusters": self._build_clusters(frame),
-            "distribution": self._build_distribution(frame),
-            "forecast": self._build_forecast_series(frame),
+            "meta": self._build_meta(result, moscow, recommendations),
+            "zones": self._build_zones(moscow),
+            "recommendations": recommendations,
+            "heatmap": self._build_heatmap(moscow),
+            "clusters": self._build_clusters(moscow),
+            "distribution": self._build_distribution(moscow),
+            "forecast": self._build_forecast_series(moscow),
         }
         return payload
 
     @staticmethod
-    def _build_meta(result, frame: pd.DataFrame) -> dict[str, Any]:
-        demand = frame["predicted_trips"]
-        high_demand_threshold = float(demand.quantile(0.75))
-        high_demand_count = int((demand >= high_demand_threshold).sum())
+    def _default_district(moscow: pd.DataFrame) -> str:
+        if "district" in moscow.columns and moscow["district"].notna().any():
+            return moscow["district"]
+        return "Moscow"
 
+    @staticmethod
+    def _build_meta(result, moscow: pd.DataFrame, recommendations: list[dict[str, Any]]) -> dict[str, Any]:
+        filters = {
+            "districts": sorted(moscow["district"].unique().tolist()),
+            "zone_types": sorted(moscow["zone_type"].unique().tolist()),
+        }
+        high_demand_threshold = float(moscow["predicted_trips"].quantile(0.75))
         meta = {
             "metrics": {
                 "mae": result.metrics.mae,
@@ -68,85 +74,78 @@ class DashboardDataBuilder:
                 "r2": result.metrics.r2,
             },
             "stats": {
-                "total_points": int(len(frame)),
-                "high_demand_zones": high_demand_count,
-                "recommended_stations": len(result.recommendations),
-                "min_predicted": float(demand.min()),
-                "max_predicted": float(demand.max()),
+                "total_points": int(len(moscow)),
+                "high_demand_zones": int((moscow["predicted_trips"] >= high_demand_threshold).sum()),
+                "recommended_stations": len(recommendations),
+                "min_predicted": float(moscow["predicted_trips"].min()),
+                "max_predicted": float(moscow["predicted_trips"].max()),
             },
-            "filters": {
-                "districts": sorted(frame["district"].unique().tolist()),
-                "zone_types": sorted(frame["zone_type"].unique().tolist()),
-            },
+            "filters": filters,
         }
         if result.data_health is not None:
             meta["data_health"] = {
                 "row_count": result.data_health.row_count,
-                "duplicates": result.data_health.duplicates,
+                "dropped_zero_coords": result.data_health.dropped_zero_coords,
+                "dropped_outliers": result.data_health.dropped_outliers,
+                "missing_coordinates": result.data_health.missing_coordinates,
             }
         return meta
 
     @staticmethod
-    def _build_zone_entries(frame: pd.DataFrame) -> list[dict[str, Any]]:
-        keep_columns = [
+    def _build_recommendations(moscow: pd.DataFrame, top_k: int = 10) -> list[dict[str, Any]]:
+        recs: list[dict[str, Any]] = []
+        for _, row in moscow.sort_values("predicted_trips", ascending=False).head(top_k).iterrows():
+            rationale = (
+                f"Близко к метро ({row['dist_to_subway_m']:.0f} м), "
+                f"POI ~ {row['poi_density_500m']:.0f}, центр {row['dist_to_center_km']:.1f} км"
+            )
+            recs.append(
+                {
+                    "zone_id": row["zone_id"],
+                    "district": row["district"],
+                    "zone_type": row["zone_type"],
+                    "predicted_trips": float(row["predicted_trips"]),
+                    "composite_score": float(row["demand_score"]),
+                    "confidence": float(row["demand_score"]),
+                    "rationale": rationale,
+                }
+            )
+        return recs
+
+    @staticmethod
+    def _build_zones(moscow: pd.DataFrame) -> list[dict[str, Any]]:
+        keep_cols = [
             "zone_id",
             "district",
             "zone_type",
             "latitude",
             "longitude",
             "predicted_trips",
-            "avg_daily_trips",
-            "micromobility_friendly_score",
-            "competition_pressure",
-            "future_growth_index",
-            "distance_to_center_km",
-            "bike_infra_km",
-            "micro_mobility_lanes_km",
-            "transit_stops",
-            "population_density",
+            "dist_to_subway_m",
+            "dist_to_center_km",
+            "poi_density_500m",
         ]
-        available_cols = [col for col in keep_columns if col in frame.columns]
-
-        zone_entries: list[dict[str, Any]] = []
-        for _, row in frame[available_cols].iterrows():
-            record = {key: (float(row[key]) if isinstance(row[key], (np.floating, float)) else row[key]) for key in available_cols}
-            record["demand_score"] = float(row["predicted_trips"])
-            zone_entries.append(record)
-        return zone_entries
+        zones: list[dict[str, Any]] = []
+        for _, row in moscow[keep_cols].iterrows():
+            zones.append({col: (float(row[col]) if isinstance(row[col], (float, np.floating, int, np.integer)) else row[col]) for col in keep_cols})
+        return zones
 
     @staticmethod
-    def _build_recommendations(recommendations) -> list[dict[str, Any]]:
-        payload = []
-        for rec in recommendations:
-            payload.append(
-                {
-                    "zone_id": rec.zone_id,
-                    "district": rec.district,
-                    "zone_type": rec.zone_type,
-                    "predicted_trips": rec.predicted_trips,
-                    "score": rec.composite_score,
-                    "confidence": rec.confidence,
-                    "rationale": rec.rationale,
-                }
-            )
-        return payload
-
-    @staticmethod
-    def _build_heatmap(frame: pd.DataFrame) -> list[list[float]]:
-        normalized = _normalize(frame["predicted_trips"])
+    def _build_heatmap(moscow: pd.DataFrame) -> list[list[float]]:
+        normalized = _normalize(moscow["predicted_trips"])
         return [
             [
                 float(row["latitude"]),
                 float(row["longitude"]),
                 float(normalized.iloc[idx]),
             ]
-            for idx, row in frame.iterrows()
+            for idx, row in moscow.iterrows()
         ]
 
     @staticmethod
-    def _build_clusters(frame: pd.DataFrame) -> list[dict[str, Any]]:
+    def _build_clusters(moscow: pd.DataFrame) -> list[dict[str, Any]]:
         clusters = []
-        for district, group in frame.groupby("district"):
+        for district, group in moscow.groupby("district"):
             clusters.append(
                 {
                     "id": district,
@@ -163,17 +162,17 @@ class DashboardDataBuilder:
         return clusters
 
     @staticmethod
-    def _build_distribution(frame: pd.DataFrame) -> dict[str, list[Any]]:
-        distribution = frame.groupby("zone_type")["predicted_trips"].sum().sort_values(ascending=False)
+    def _build_distribution(moscow: pd.DataFrame) -> dict[str, list[Any]]:
+        distribution = moscow.groupby("zone_type")["predicted_trips"].sum().sort_values(ascending=False)
         return {
             "labels": distribution.index.tolist(),
             "values": [float(v) for v in distribution.values],
         }
 
     @staticmethod
-    def _build_forecast_series(frame: pd.DataFrame) -> dict[str, list[float]]:
-        top = frame.sort_values("predicted_trips", ascending=False).head(5)
-        historical = top["avg_daily_trips"] if "avg_daily_trips" in top else top["predicted_trips"] * 0.9
+    def _build_forecast_series(moscow: pd.DataFrame) -> dict[str, list[float]]:
+        top = moscow.sort_values("predicted_trips", ascending=False).head(5)
+        historical = top["predicted_trips"] * 0.9
         forecast = top["predicted_trips"] * 1.05
         return {
             "labels": top["zone_id"].tolist(),

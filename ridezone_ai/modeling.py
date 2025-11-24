@@ -1,4 +1,4 @@
-﻿"""Modeling utilities for RideZone AI."""
+"""Modeling utilities for RideZone AI transfer learning."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -9,14 +9,14 @@ import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.impute import SimpleImputer
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler
 
 from .config import FeatureConfig, ModelConfig
-from .data_models import ModelMetrics
+from .data_models import ModelMetrics, TrainingArtifacts
 
 
 @dataclass
@@ -28,10 +28,11 @@ class TrainingResult:
     predictions: pd.Series
     holdout_predictions: pd.Series
     holdout_actuals: pd.Series
+    artifacts: TrainingArtifacts
 
 
-class DemandRegressor:
-    """Wrapper around a scikit-learn pipeline that predicts trip demand."""
+class TransferRegressor:
+    """Wrapper around a scikit-learn pipeline that predicts trip demand on log scale."""
 
     def __init__(self, feature_config: FeatureConfig, model_config: ModelConfig, model_dir: Path) -> None:
         self.feature_config = feature_config
@@ -39,41 +40,54 @@ class DemandRegressor:
         self.model_dir = model_dir
         self.pipeline: Pipeline | None = None
 
-    def train(self, features: pd.DataFrame, target: pd.Series) -> TrainingResult:
+    def train(self, df: pd.DataFrame) -> TrainingResult:
+        X = df[list(self.feature_config.feature_columns)]
+        y = np.log1p(df["avg_daily_trips"])
+
         X_train, X_test, y_train, y_test = train_test_split(
-            features,
-            target,
+            X,
+            y,
             test_size=self.model_config.test_size,
             random_state=self.model_config.random_state,
         )
         pipeline = self._build_pipeline()
         pipeline.fit(X_train, y_train)
 
-        y_pred = pipeline.predict(X_test)
-        metrics = self._compute_metrics(y_test, y_pred)
-        all_predictions = pipeline.predict(features)
-        prediction_series = pd.Series(all_predictions, index=features.index, name="predicted_trips")
+        test_pred_log = pipeline.predict(X_test)
+        y_pred = np.expm1(test_pred_log)
+        y_true = np.expm1(y_test)
+        metrics = self._compute_metrics(y_true, y_pred)
+
+        all_predictions = np.expm1(pipeline.predict(X))
+        prediction_series = pd.Series(all_predictions, index=df.index, name="predicted_trips")
         holdout_series = pd.Series(y_pred, index=X_test.index, name="predicted_holdout")
         model_path = self._persist_model(pipeline)
         self.pipeline = pipeline
+
+        artifacts = TrainingArtifacts(
+            metrics=metrics,
+            model_path=model_path,
+            train_rows=len(X_train),
+            holdout_rows=len(X_test),
+        )
 
         return TrainingResult(
             metrics=metrics,
             model_path=model_path,
             predictions=prediction_series,
             holdout_predictions=holdout_series,
-            holdout_actuals=y_test,
+            holdout_actuals=pd.Series(y_true, index=X_test.index, name="actual_holdout"),
+            artifacts=artifacts,
         )
 
-    def predict(self, features: pd.DataFrame) -> np.ndarray:
+    def predict(self, features: pd.DataFrame) -> pd.Series:
         if self.pipeline is None:
             raise RuntimeError("Model has not been trained yet.")
-        return self.pipeline.predict(features)
+        preds = self.pipeline.predict(features[list(self.feature_config.feature_columns)])
+        return pd.Series(np.expm1(preds), index=features.index, name="predicted_demand")
 
     def _build_pipeline(self) -> Pipeline:
-        numeric_columns = list(self.feature_config.numeric_features) + list(self.feature_config.derived_numeric_features)
-        numeric_columns += [self.feature_config.latitude_column, self.feature_config.longitude_column]
-        categorical_columns = list(self.feature_config.categorical_features)
+        numeric_columns = list(self.feature_config.feature_columns)
 
         numeric_transformer = Pipeline(
             steps=[
@@ -82,20 +96,9 @@ class DemandRegressor:
             ]
         )
 
-        categorical_transformer = Pipeline(
-            steps=[
-                ("imputer", SimpleImputer(strategy="most_frequent")),
-                (
-                    "encoder",
-                    OneHotEncoder(handle_unknown="ignore", sparse_output=False),
-                ),
-            ]
-        )
-
         transformer = ColumnTransformer(
             transformers=[
                 ("numeric", numeric_transformer, numeric_columns),
-                ("categorical", categorical_transformer, categorical_columns),
             ]
         )
 
@@ -120,7 +123,6 @@ class DemandRegressor:
 
     def _persist_model(self, pipeline: Pipeline) -> Path:
         self.model_dir.mkdir(parents=True, exist_ok=True)
-        model_path = self.model_dir / "ridezone_model.pkl"
+        model_path = self.model_dir / "transfer_model.pkl"
         joblib.dump(pipeline, model_path)
         return model_path
-

@@ -1,8 +1,13 @@
-﻿"""Build JSON payload consumed by the interactive dashboard."""
+"""Build JSON payload consumed by the interactive dashboard."""
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from ridezone_ai.dashboard import write_dashboard_json
 
